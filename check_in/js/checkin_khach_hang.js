@@ -10,14 +10,19 @@ async function getSupabaseLib(){
 
   const toast = (msg,t='')=>{
     const el = $('#toast');
+
     el.textContent = msg;
     el.style.display = 'block';
     el.style.borderColor =
       t==='err' ? '#ef4444' :
       t==='ok'  ? '#22c55e' :
                   '#243153';
+
     clearTimeout(toast._t);
-    toast._t = setTimeout(()=>el.style.display='none',2200);
+
+    toast._t = setTimeout(()=>{
+      el.style.display='none';
+    }, 2200);
   };
 
   function escAttr(v){
@@ -29,61 +34,68 @@ async function getSupabaseLib(){
 
   function cssEscapeSafe(v){
     try{
-      return CSS && CSS.escape ? CSS.escape(v) : String(v).replace(/"/g,'\\"');
+      return CSS && CSS.escape
+        ? CSS.escape(v)
+        : String(v).replace(/"/g,'\\"');
     }catch{
       return String(v).replace(/"/g,'\\"');
     }
   }
 
-  const TABLE           = 'nv_checkin_khach_hang';
-  const SESSION_IMG_KEY = 'CHECKIN_IMAGE_PAYLOAD';
-  const CHECKIN_TABLE   = 'nv_checkin';
+  const TABLE            = 'nv_checkin_khach_hang';
+  const SESSION_IMG_KEY  = 'CHECKIN_IMAGE_PAYLOAD';
+  const CHECKIN_TABLE    = 'nv_checkin';
   const CHECKIN_DATE_COL = 'ngay';
+
+  /*
+    CHECKIN_BROWSER_DONE_KEY:
+    - Bấm 1 Mã KH thì khóa toàn bộ Mã KH trên tab/trình duyệt này.
+    - Refresh lại cùng shot_id thì vẫn khóa.
+    - Chụp ảnh mới từ app_checkin thì shot_id mới sẽ mở khóa.
+  */
+  const CHECKIN_BROWSER_DONE_KEY = 'CHECKIN_BROWSER_DONE_V1';
+  const CHECKIN_UNLOCKED_SHOT_KEY = 'CHECKIN_UNLOCKED_SHOT_ID';
+
+  /*
+    Mở khóa khi có shot_id mới.
+
+    Nguyên tắc:
+    - app_checkin.js tạo shot_id mới mỗi lần chụp.
+    - checkin_khach_hang.js thấy shot_id mới chưa từng mở khóa:
+        => xóa khóa mờ
+        => ghi nhận shot_id này đã được mở khóa.
+    - Nếu refresh lại cùng shot_id sau khi đã bấm check-in:
+        => không xóa khóa nữa
+        => Mã KH vẫn mờ.
+  */
+  (function clearLockWhenNewShot(){
+    try{
+      const qp = new URLSearchParams(location.search);
+
+      const shotIdFromUrl = qp.get('shot_id') || '';
+      const shotIdFromSession = sessionStorage.getItem('CHECKIN_CURRENT_SHOT_ID') || '';
+      const shotId = shotIdFromUrl || shotIdFromSession;
+
+      const unlockedShotId = sessionStorage.getItem(CHECKIN_UNLOCKED_SHOT_KEY) || '';
+
+      if (shotId && shotId !== unlockedShotId) {
+        sessionStorage.removeItem('CLICKED_CHECKIN_BROWSER_V1');
+        sessionStorage.removeItem(CHECKIN_BROWSER_DONE_KEY);
+
+        sessionStorage.setItem(CHECKIN_UNLOCKED_SHOT_KEY, shotId);
+        sessionStorage.setItem('CHECKIN_CURRENT_SHOT_ID', shotId);
+      }
+
+    }catch(e){
+      console.warn('Không thể xử lý mở khóa theo shot_id:', e);
+    }
+  })();
 
   let SB      = null;
   let CURRENT = null;
+
   const pendingCheckins = new Set();
-
-/*
-  Khóa toàn bộ nút Mã KH trên chính trình duyệt/tab hiện tại
-  sau khi đã bấm check-in thành công/đang gửi.
-
-  Mục tiêu:
-  - Bấm 1 Mã KH là toàn bộ Mã KH mờ ngay.
-  - Nếu bảng refresh/render lại, toàn bộ Mã KH vẫn mờ.
-  - Chỉ khi chụp ảnh mới từ app_checkin.js thì khóa này được xóa.
-*/
-const CHECKIN_BROWSER_DONE_KEY = 'CHECKIN_BROWSER_DONE_V1';
-const CHECKIN_LAST_SHOT_KEY = 'CHECKIN_LAST_SHOT_ID';
-
-/*
-  Nếu app_checkin.js vừa chụp ảnh mới và truyền shot_id mới sang,
-  thì mở lại toàn bộ nút Mã KH.
-
-  Lưu ý:
-  - Chỉ clear khóa 1 lần cho mỗi shot_id mới.
-  - Nếu refresh lại cùng shot_id sau khi đã check-in thì vẫn mờ.
-*/
-(function clearLockWhenNewShot(){
-  const qp = new URLSearchParams(location.search);
-
-  const shotId =
-    qp.get('shot_id') ||
-    sessionStorage.getItem('CHECKIN_CURRENT_SHOT_ID') ||
-    '';
-
-  const lastShotId =
-    sessionStorage.getItem(CHECKIN_LAST_SHOT_KEY) ||
-    '';
-
-  if (shotId && shotId !== lastShotId) {
-    sessionStorage.removeItem('CLICKED_CHECKIN_BROWSER_V1');
-    sessionStorage.removeItem(CHECKIN_BROWSER_DONE_KEY);
-    sessionStorage.setItem(CHECKIN_LAST_SHOT_KEY, shotId);
-  }
-})();
-
-let checkinBusy = false;
+  let checkinBusy = false;
 
   function isBrowserCheckinDone(){
     return sessionStorage.getItem(CHECKIN_BROWSER_DONE_KEY) === '1';
@@ -103,20 +115,35 @@ let checkinBusy = false;
 
   function getLatLngFromURL(){
     const qp = new URLSearchParams(location.search);
+
     const latRaw = qp.get('lat') ?? qp.get('latitude');
     const lngRaw = qp.get('lng') ?? qp.get('long') ?? qp.get('lon') ?? qp.get('longitude');
-    const lat = Number(latRaw), lng = Number(lngRaw);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+
+    const lat = Number(latRaw);
+    const lng = Number(lngRaw);
+
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return { lat, lng };
+    }
+
     return null;
   }
 
   function initRadiusFromURLOrDefault(){
     const sel = $('#radiusSelect');
     const qp = new URLSearchParams(location.search);
+
     let r = Number(qp.get('radius'));
     const rkm = Number(qp.get('radius_km'));
-    if (Number.isFinite(rkm) && rkm > 0) r = rkm * 1000;
-    if (!Number.isFinite(r) || r <= 0) r = 50;
+
+    if (Number.isFinite(rkm) && rkm > 0) {
+      r = rkm * 1000;
+    }
+
+    if (!Number.isFinite(r) || r <= 0) {
+      r = 50;
+    }
+
     if ([20,50,100,500].includes(Math.round(r))){
       sel.value = String(Math.round(r));
     } else {
@@ -137,6 +164,7 @@ let checkinBusy = false;
         if (o?.ma_nv) return String(o.ma_nv);
       }
     }catch{}
+
     try{
       const s2 = localStorage.getItem('nv');
       if (s2){
@@ -144,6 +172,7 @@ let checkinBusy = false;
         if (o2?.ma_nv) return String(o2.ma_nv);
       }
     }catch{}
+
     return null;
   }
 
@@ -155,6 +184,7 @@ let checkinBusy = false;
         if (o?.ten_nv) return String(o.ten_nv);
       }
     }catch{}
+
     try{
       const s2 = localStorage.getItem('nv');
       if (s2){
@@ -162,6 +192,7 @@ let checkinBusy = false;
         if (o2?.ten_nv) return String(o2.ten_nv);
       }
     }catch{}
+
     return null;
   }
 
@@ -169,25 +200,33 @@ let checkinBusy = false;
     try{
       const raw = sessionStorage.getItem(SESSION_IMG_KEY);
       if (!raw) return null;
+
       const p = JSON.parse(raw);
+
       if (p && typeof p.image_b64 === 'string' && p.image_b64.length > 0){
         return p;
       }
+
     }catch{}
+
     return null;
   }
 
   function getTodayPrefix_ddMMyyyy(){
     const d = new Date();
+
     const dd = String(d.getDate()).padStart(2,'0');
     const mm = String(d.getMonth()+1).padStart(2,'0');
     const yyyy = d.getFullYear();
+
     return `${dd}/${mm}/${yyyy}`;
   }
 
   function isSameTodayFromText(v){
     const s = String(v || '').trim();
+
     if (!s) return false;
+
     return s.startsWith(getTodayPrefix_ddMMyyyy());
   }
 
@@ -197,15 +236,26 @@ let checkinBusy = false;
 
     const mapped = all.map(r => {
       const checkedToday = isSameTodayFromText(r.ngay_cuoi_cung_checkin);
-      if (checkedToday) disabledCount++;
-      return { ...r, checkedToday };
+
+      if (checkedToday) {
+        disabledCount++;
+      }
+
+      return {
+        ...r,
+        checkedToday
+      };
     });
 
-    return { rows: mapped, disabledCount };
+    return {
+      rows: mapped,
+      disabledCount
+    };
   }
 
   function applyCheckedTodayLock(){
     const btnAdd = $('#btnAdd');
+
     if (btnAdd){
       btnAdd.classList.remove('btn-disabled');
       btnAdd.disabled = false;
@@ -219,6 +269,7 @@ let checkinBusy = false;
 
   async function loadCheckedToday(){
     const ma_nv = getCurrentNVID();
+
     if (!ma_nv) return false;
 
     const todayPrefix = getTodayPrefix_ddMMyyyy();
@@ -238,7 +289,9 @@ let checkinBusy = false;
 
       const hasCheckinToday = Array.isArray(data) && data.length > 0;
       console.log('HAS_CHECKIN_TODAY =', hasCheckinToday, data);
+
       return hasCheckinToday;
+
     }catch(err){
       console.warn('Lỗi đọc nv_checkin:', err);
       return false;
@@ -251,7 +304,10 @@ let checkinBusy = false;
 
   async function postWebhook(payload){
     const url = getWebhookURL();
-    const headers = { 'content-type':'application/json' };
+    const headers = {
+      'content-type':'application/json'
+    };
+
     try{
       if (typeof getInternalKey === 'function'){
         headers['x-internal-key'] = getInternalKey();
@@ -259,34 +315,80 @@ let checkinBusy = false;
     }catch{}
 
     try{
-      const res = await fetch(url, { method:'POST', headers, body: JSON.stringify(payload) });
-      const text = await res.text().catch(()=> '');
-      if (res.ok) return { ok:true, status:res.status, text };
-      if (res.status !== 405) return { ok:false, status:res.status, text };
+      const res = await fetch(url, {
+        method:'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      const text = await res.text().catch(()=>'');
+
+      if (res.ok) {
+        return {
+          ok:true,
+          status:res.status,
+          text
+        };
+      }
+
+      if (res.status !== 405) {
+        return {
+          ok:false,
+          status:res.status,
+          text
+        };
+      }
+
     }catch(e){}
 
-    const qs = new URLSearchParams(Object.entries(payload).map(([k,v])=>[k, String(v ?? '')])).toString();
+    const qs = new URLSearchParams(
+      Object.entries(payload).map(([k,v])=>[k, String(v ?? '')])
+    ).toString();
+
     const getUrl = url + (url.includes('?') ? '&' : '?') + qs;
+
     try{
-      const res2 = await fetch(getUrl, { method:'GET', headers: { 'x-internal-key': headers['x-internal-key'] || '' } });
-      const text2 = await res2.text().catch(()=> '');
-      return { ok: res2.ok, status: res2.status, text: text2 };
+      const res2 = await fetch(getUrl, {
+        method:'GET',
+        headers: {
+          'x-internal-key': headers['x-internal-key'] || ''
+        }
+      });
+
+      const text2 = await res2.text().catch(()=>'');
+
+      return {
+        ok: res2.ok,
+        status: res2.status,
+        text: text2
+      };
+
     }catch(e2){
-      return { ok:false, status:0, text:String(e2) };
+      return {
+        ok:false,
+        status:0,
+        text:String(e2)
+      };
     }
   }
 
   function openModal(mode,row=null){
     CURRENT = { mode };
-    $('#modalTitle').textContent = mode==='add' ? 'Thêm khách hàng' : 'Sửa khách hàng';
-    $('#f_ma_kh').disabled = (mode==='edit');
 
-    if (mode==='edit' && row){
+    $('#modalTitle').textContent = mode === 'add'
+      ? 'Thêm khách hàng'
+      : 'Sửa khách hàng';
+
+    $('#f_ma_kh').disabled = (mode === 'edit');
+
+    if (mode === 'edit' && row){
       $('#f_ma_kh').value      = row.ma_kh || '';
       $('#f_ten_kh').value     = row.ten_kh || '';
       $('#f_dia_chi').value    = row.dia_chi || '';
       $('#f_dien_thoai').value = row.dien_thoai || '';
+
       CURRENT.ma_kh = row.ma_kh;
+
     }else{
       $('#f_ma_kh').value      = '';
       $('#f_ten_kh').value     = '';
@@ -297,17 +399,25 @@ let checkinBusy = false;
     $('#modalWrap').style.display = 'flex';
   }
 
-  const closeModal = () => $('#modalWrap').style.display='none';
+  const closeModal = () => {
+    $('#modalWrap').style.display='none';
+  };
 
   async function makeClient(){
     const url  = getConfig('url');
     const anon = getConfig('anon');
     const lib  = await getSupabaseLib();
-    return lib.createClient(url,anon,{auth:{persistSession:false}});
+
+    return lib.createClient(url,anon,{
+      auth:{
+        persistSession:false
+      }
+    });
   }
 
   async function loadData(showStatusToast = false){
-    $('#tbody').innerHTML = `<tr><td colspan="4" class="muted">Đang tải...</td></tr>`;
+    $('#tbody').innerHTML =
+      `<tr><td colspan="4" class="muted">Đang tải...</td></tr>`;
 
     const { data, error } = await SB
       .from(TABLE)
@@ -317,15 +427,18 @@ let checkinBusy = false;
 
     if (error){
       console.error(error);
+
       $('#tbody').innerHTML =
         `<tr><td colspan="4" class="muted">Lỗi Supabase: ${error.message}</td></tr>`;
+
       return;
     }
 
     const { rows, disabledCount } = getCheckinTodayState(data || []);
 
     $('#countInfo').textContent =
-      `${rows.length} dòng` + (disabledCount ? ` • Disable ${disabledCount} KH đã check-in hôm nay` : '');
+      `${rows.length} dòng` +
+      (disabledCount ? ` • Disable ${disabledCount} KH đã check-in hôm nay` : '');
 
     renderRows(rows);
 
@@ -338,6 +451,7 @@ let checkinBusy = false;
     if (!rows.length){
       $('#tbody').innerHTML =
         `<tr><td colspan="4" class="muted">Không có dữ liệu</td></tr>`;
+
     } else {
       const html = rows.map(r => {
         const disabledByCustomer = r.checkedToday === true;
@@ -357,19 +471,22 @@ let checkinBusy = false;
 
         return `
       <tr data-id="${escAttr(r.ma_kh)}"
-          data-ten_kh="${escAttr(r.ten_kh||'')}"
-          data-dia_chi="${escAttr(r.dia_chi||'')}"
-          data-dien_thoai="${escAttr(r.dien_thoai||'')}"
-          data-ngay_cuoi_cung_checkin="${escAttr(r.ngay_cuoi_cung_checkin||'')}">
+          data-ten_kh="${escAttr(r.ten_kh || '')}"
+          data-dia_chi="${escAttr(r.dia_chi || '')}"
+          data-dien_thoai="${escAttr(r.dien_thoai || '')}"
+          data-ngay_cuoi_cung_checkin="${escAttr(r.ngay_cuoi_cung_checkin || '')}">
 
         <td class="col-ma">
           ${btnHtml}
         </td>
+
         <td class="col-ten">
           ${r.ten_kh || ''}
           ${disabledByCustomer ? `<span class="muted"> • Đã check-in hôm nay</span>` : ``}
         </td>
+
         <td class="col-phone">${r.dien_thoai || ''}</td>
+
         <td class="col-actions">
           <button class="btn btn-warn btn-edit">Sửa</button>
         </td>
@@ -392,150 +509,147 @@ let checkinBusy = false;
 
   function onEditClick(e){
     const tr = e.target.closest('tr');
+
     if (!tr) return;
+
     const row = {
       ma_kh:      tr.getAttribute('data-id'),
       ten_kh:     tr.dataset.ten_kh || tr.children[1].textContent,
       dia_chi:    tr.dataset.dia_chi || '',
       dien_thoai: tr.dataset.dien_thoai || tr.children[2].textContent
     };
+
     openModal('edit', row);
   }
 
-async function onMaKHClick(ma_kh){
-  if (!ma_kh) return;
+  async function onMaKHClick(ma_kh){
+    if (!ma_kh) return;
 
-  if (isBrowserCheckinDone()) {
-    toast('Đã gửi check-in trên trình duyệt này. Hãy chụp ảnh mới để check-in tiếp.', 'info');
-    return;
-  }
-
-  if (checkinBusy) {
-    toast('Đang gửi check-in, vui lòng chờ...', 'info');
-    return;
-  }
-
-  if (pendingCheckins.has(ma_kh)) {
-    toast('Check-in này đang được xử lý...', 'info');
-    return;
-  }
-
-  const coords = getLatLngFromURL();
-  if (!coords){
-    toast('Thiếu toạ độ lat/lng trong URL — không thể checkin', 'err');
-    return;
-  }
-
-  checkinBusy = true;
-  pendingCheckins.add(ma_kh);
-
-  /*
-    Khóa NGAY khi bấm.
-    Nếu webhook đang chạy mà bảng refresh/render lại, renderRows()
-    vẫn thấy CHECKIN_BROWSER_DONE_KEY và tiếp tục làm mờ toàn bộ Mã KH.
-  */
-  setBrowserCheckinDone();
-
-  const currentBtn = document.querySelector(`.ma-kh-btn[data-id="${cssEscapeSafe(ma_kh)}"]`);
-
-  /*
-    Khóa toàn bộ nút Mã KH ngay khi bấm.
-    Như vậy không thể bấm nhầm mã thứ 2.
-  */
-  $$('#tbody .ma-kh-btn:not(.ma-kh-disabled)').forEach(btn=>{
-    btn.disabled = true;
-    btn.classList.add('ma-kh-disabled');
-    btn.title = 'Đang có check-in được gửi...';
-  });
-
-  if (currentBtn){
-    currentBtn.textContent = 'Đang gửi...';
-    currentBtn.removeAttribute('data-id');
-    currentBtn.title = 'Đang gửi check-in...';
-  }
-
-  const ma_nv  = getCurrentNVID();
-  const ten_nv = getCurrentNVName();
-  const img    = getImagePayloadFromSession();
-
-  try{
-    const payload = {
-      action: 'checkin',
-      ma_kh,
-      ma_nv:  ma_nv  || null,
-      ten_nv: ten_nv || null,
-      lat: Number(coords.lat),
-      lng: Number(coords.lng),
-      image_mime: img?.image_mime || 'image/jpeg',
-      image_b64:  img?.image_b64  || ''
-    };
-
-    const res = await postWebhook(payload);
-
-    if (res.ok){
-      toast(`✅ ĐÃ CHECK IN KH: ${ma_kh}`,'ok');
-
-      if (currentBtn){
-        currentBtn.disabled = true;
-        currentBtn.classList.add('ma-kh-disabled');
-        currentBtn.textContent = ma_kh;
-        currentBtn.removeAttribute('data-id');
-        currentBtn.title = 'Đã gửi check-in';
-      }
-
-      setTimeout(() => {
-        const coords2 = getLatLngFromURL();
-        if (coords2){
-          runNearby(coords2.lat, coords2.lng, getRadiusFromUI(), false);
-        } else {
-          loadData(false);
-        }
-      }, 1200);
-
-    } else {
-      throw new Error(`Webhook lỗi ${res.status}: ${res.text?.slice(0,160)||'...'}`);
+    if (isBrowserCheckinDone()) {
+      toast('Đã gửi check-in trên trình duyệt này. Hãy chụp ảnh mới để check-in tiếp.', 'info');
+      return;
     }
 
-  } catch(err){
-    console.error(err);
+    if (checkinBusy) {
+      toast('Đang gửi check-in, vui lòng chờ...', 'info');
+      return;
+    }
 
-    /*
-      Nếu webhook lỗi thật thì mở lại toàn bộ nút.
-    */
-    clearBrowserCheckinDone();
+    if (pendingCheckins.has(ma_kh)) {
+      toast('Check-in này đang được xử lý...', 'info');
+      return;
+    }
 
-    $$('#tbody .ma-kh-btn.ma-kh-disabled').forEach(btn=>{
-      const txt = btn.textContent.trim();
+    const coords = getLatLngFromURL();
 
-      if (txt === 'Đang gửi...') {
-        btn.textContent = ma_kh;
-      }
+    if (!coords){
+      toast('Thiếu toạ độ lat/lng trong URL — không thể checkin', 'err');
+      return;
+    }
 
-      btn.disabled = false;
-      btn.classList.remove('ma-kh-disabled');
-      btn.title = '';
+    checkinBusy = true;
+    pendingCheckins.add(ma_kh);
 
-      if (!btn.getAttribute('data-id')) {
-        btn.setAttribute('data-id', txt === 'Đang gửi...' ? ma_kh : txt);
-      }
+    setBrowserCheckinDone();
+
+    const currentBtn = document.querySelector(
+      `.ma-kh-btn[data-id="${cssEscapeSafe(ma_kh)}"]`
+    );
+
+    $$('#tbody .ma-kh-btn:not(.ma-kh-disabled)').forEach(btn=>{
+      btn.disabled = true;
+      btn.classList.add('ma-kh-disabled');
+      btn.title = 'Đang có check-in được gửi...';
     });
 
-    toast(err.message || 'Gửi webhook thất bại','err');
+    if (currentBtn){
+      currentBtn.textContent = 'Đang gửi...';
+      currentBtn.removeAttribute('data-id');
+      currentBtn.title = 'Đang gửi check-in...';
+    }
 
-  } finally {
-    checkinBusy = false;
-    pendingCheckins.delete(ma_kh);
+    const ma_nv  = getCurrentNVID();
+    const ten_nv = getCurrentNVName();
+    const img    = getImagePayloadFromSession();
+
+    try{
+      const payload = {
+        action: 'checkin',
+        ma_kh,
+        ma_nv:  ma_nv  || null,
+        ten_nv: ten_nv || null,
+        lat: Number(coords.lat),
+        lng: Number(coords.lng),
+        image_mime: img?.image_mime || 'image/jpeg',
+        image_b64:  img?.image_b64  || ''
+      };
+
+      const res = await postWebhook(payload);
+
+      if (res.ok){
+        toast(`✅ ĐÃ CHECK IN KH: ${ma_kh}`,'ok');
+
+        if (currentBtn){
+          currentBtn.disabled = true;
+          currentBtn.classList.add('ma-kh-disabled');
+          currentBtn.textContent = ma_kh;
+          currentBtn.removeAttribute('data-id');
+          currentBtn.title = 'Đã gửi check-in';
+        }
+
+        setTimeout(() => {
+          const coords2 = getLatLngFromURL();
+
+          if (coords2){
+            runNearby(coords2.lat, coords2.lng, getRadiusFromUI(), false);
+          } else {
+            loadData(false);
+          }
+        }, 1200);
+
+      } else {
+        throw new Error(`Webhook lỗi ${res.status}: ${res.text?.slice(0,160)||'...'}`);
+      }
+
+    } catch(err){
+      console.error(err);
+
+      clearBrowserCheckinDone();
+
+      $$('#tbody .ma-kh-btn.ma-kh-disabled').forEach(btn=>{
+        const txt = btn.textContent.trim();
+
+        if (txt === 'Đang gửi...') {
+          btn.textContent = ma_kh;
+        }
+
+        btn.disabled = false;
+        btn.classList.remove('ma-kh-disabled');
+        btn.title = '';
+
+        if (!btn.getAttribute('data-id')) {
+          btn.setAttribute('data-id', txt === 'Đang gửi...' ? ma_kh : txt);
+        }
+      });
+
+      toast(err.message || 'Gửi webhook thất bại','err');
+
+    } finally {
+      checkinBusy = false;
+      pendingCheckins.delete(ma_kh);
+    }
   }
-}
 
   function generateMaKH(){
     const d = new Date();
+
     const yy = String(d.getFullYear()).slice(-2);
     const MM = String(d.getMonth()+1).padStart(2,'0');
     const dd = String(d.getDate()).padStart(2,'0');
     const hh = String(d.getHours()).padStart(2,'0');
     const mm = String(d.getMinutes()).padStart(2,'0');
     const ss = String(d.getSeconds()).padStart(2,'0');
+
     return yy + MM + dd + hh + mm + ss;
   }
 
@@ -550,11 +664,13 @@ async function onMaKHClick(ma_kh){
       console.error('Lỗi check mã KH:', error);
       return false;
     }
+
     return Array.isArray(data) && data.length > 0;
   }
 
   async function saveForm(){
-    let ma_kh      = $('#f_ma_kh').value.trim();
+    let ma_kh = $('#f_ma_kh').value.trim();
+
     const ten_kh     = $('#f_ten_kh').value.trim();
     const dia_chi    = $('#f_dia_chi').value.trim();
     const dien_thoai = $('#f_dien_thoai').value.trim();
@@ -567,10 +683,12 @@ async function onMaKHClick(ma_kh){
       }
 
       const exists = await checkMaKHExists(ma_kh);
+
       if (exists){
         toast(`❌ Mã KH ${ma_kh} đã tồn tại, vui lòng nhập mã khác hoặc để trống để tự sinh`,'err');
         return;
       }
+
     } else {
       if (!ma_kh){
         toast('Mã KH không được trống','err');
@@ -585,18 +703,33 @@ async function onMaKHClick(ma_kh){
     if (CURRENT?.mode === 'add'){
       const { error } = await SB
         .from(TABLE)
-        .insert([{ ma_kh, ten_kh, dia_chi, dien_thoai, lat, lng }]);
+        .insert([{
+          ma_kh,
+          ten_kh,
+          dia_chi,
+          dien_thoai,
+          lat,
+          lng
+        }]);
 
       if (error){
         console.error(error);
         toast('Thêm thất bại','err');
         return;
       }
+
       toast('Đã thêm','ok');
+
     } else {
       const { error } = await SB
         .from(TABLE)
-        .update({ ten_kh, dia_chi, dien_thoai, lat, lng })
+        .update({
+          ten_kh,
+          dia_chi,
+          dien_thoai,
+          lat,
+          lng
+        })
         .eq('ma_kh', CURRENT.ma_kh);
 
       if (error){
@@ -604,10 +737,12 @@ async function onMaKHClick(ma_kh){
         toast('Sửa thất bại','err');
         return;
       }
+
       toast('Đã lưu','ok');
     }
 
     closeModal();
+
     if (coords){
       runNearby(coords.lat, coords.lng, getRadiusFromUI(), false);
     } else {
@@ -617,68 +752,100 @@ async function onMaKHClick(ma_kh){
 
   async function runNearby(lat, lng, radius, showStatusToast = false){
     const $tbody = $('#tbody');
+
     $tbody.innerHTML =
       `<tr><td colspan="4" class="muted">Đang lọc theo bán kính...</td></tr>`;
 
-    const R = 6371000, d2r = Math.PI/180, latR = lat*d2r;
-    const delta = (radius / R) * (180/Math.PI);
+    const R = 6371000;
+    const d2r = Math.PI/180;
+    const latR = lat * d2r;
+
+    const delta = (radius / R) * (180 / Math.PI);
     const cosLat = Math.max(1e-6, Math.cos(latR));
-    const minLat = lat - delta, maxLat = lat + delta;
-    const minLng = lng - delta/cosLat;
-    const maxLng = lng + delta/cosLat;
+
+    const minLat = lat - delta;
+    const maxLat = lat + delta;
+    const minLng = lng - delta / cosLat;
+    const maxLng = lng + delta / cosLat;
 
     const { data, error } = await SB
       .from(TABLE)
       .select('ma_kh,ten_kh,dia_chi,dien_thoai,lat,lng,ngay_cuoi_cung_checkin', { count:'exact' })
-      .not('lat','is',null).not('lng','is',null)
-      .gte('lat', minLat).lte('lat', maxLat)
-      .gte('lng', minLng).lte('lng', maxLng)
+      .not('lat','is',null)
+      .not('lng','is',null)
+      .gte('lat', minLat)
+      .lte('lat', maxLat)
+      .gte('lng', minLng)
+      .lte('lng', maxLng)
       .limit(1000);
 
     if (error){
       console.error(error);
       toast('Lỗi truy vấn Supabase','err');
+
       $('#tbody').innerHTML =
         `<tr><td colspan="4" class="muted">Không có dữ liệu</td></tr>`;
+
       $('#countInfo').textContent = `0 dòng (lỗi truy vấn)`;
+
       return;
     }
 
     const { rows: sourceRows, disabledCount } = getCheckinTodayState(data || []);
 
     const rows = sourceRows
-      .map(r=>({ ...r, rlat:Number(r.lat), rlng:Number(r.lng) }))
+      .map(r=>({
+        ...r,
+        rlat:Number(r.lat),
+        rlng:Number(r.lng)
+      }))
       .filter(r=>Number.isFinite(r.rlat) && Number.isFinite(r.rlng));
 
     const nearby = rows.map(r=>{
       const dLat = (r.rlat - lat) * d2r;
       const dLng = (r.rlng - lng) * d2r;
-      const a = Math.sin(dLat/2)**2 +
-                Math.cos(latR)*Math.cos(r.rlat*d2r)*Math.sin(dLng/2)**2;
-      const dist = 2*R*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      return { ...r, dist: Math.round(dist) };
+
+      const a =
+        Math.sin(dLat/2) ** 2 +
+        Math.cos(latR) *
+        Math.cos(r.rlat * d2r) *
+        Math.sin(dLng/2) ** 2;
+
+      const dist = 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+      return {
+        ...r,
+        dist: Math.round(dist)
+      };
+
     }).filter(r=>r.dist <= radius)
       .sort((a,b)=>a.dist - b.dist);
 
     if (nearby.length === 0){
       $('#tbody').innerHTML =
         `<tr><td colspan="4" class="muted">Không có dữ liệu</td></tr>`;
+
       $('#countInfo').textContent =
-        `0 dòng (lọc ${Math.round(radius)}m)` + (disabledCount ? ` • Disable ${disabledCount} KH đã check-in hôm nay` : '');
+        `0 dòng (lọc ${Math.round(radius)}m)` +
+        (disabledCount ? ` • Disable ${disabledCount} KH đã check-in hôm nay` : '');
+
       if (showStatusToast){
         toast(`Không có KH trong ${Math.round(radius)}m`, 'info');
       }
+
       return;
     }
 
     renderRows(nearby);
 
     $('#countInfo').textContent =
-      `${nearby.length} dòng (lọc ${Math.round(radius)}m)` + (disabledCount ? ` • Disable ${disabledCount} KH đã check-in hôm nay` : '');
+      `${nearby.length} dòng (lọc ${Math.round(radius)}m)` +
+      (disabledCount ? ` • Disable ${disabledCount} KH đã check-in hôm nay` : '');
 
     if (showStatusToast){
       toast(
-        `Tìm thấy ${nearby.length} KH` + (disabledCount ? ` • Disable ${disabledCount} KH đã check-in hôm nay` : ''),
+        `Tìm thấy ${nearby.length} KH` +
+        (disabledCount ? ` • Disable ${disabledCount} KH đã check-in hôm nay` : ''),
         'ok'
       );
     }
@@ -689,6 +856,7 @@ async function onMaKHClick(ma_kh){
   $('#btnSave').addEventListener('click',saveForm);
 
   const btnOpenCheckin = $('#btnOpenCheckin');
+
   if (btnOpenCheckin){
     btnOpenCheckin.addEventListener('click', ()=>{
       location.assign('app_checkin.html');
@@ -698,8 +866,12 @@ async function onMaKHClick(ma_kh){
   $('#radiusSelect').addEventListener('change',()=>{
     const coords = getLatLngFromURL();
     const r = getRadiusFromUI();
-    if (coords) runNearby(coords.lat, coords.lng, r, true);
-    else toast('Thiếu toạ độ lat/lng trong URL để lọc theo bán kính', 'err');
+
+    if (coords) {
+      runNearby(coords.lat, coords.lng, r, true);
+    } else {
+      toast('Thiếu toạ độ lat/lng trong URL để lọc theo bán kính', 'err');
+    }
   });
 
   try{
@@ -711,14 +883,18 @@ async function onMaKHClick(ma_kh){
     initRadiusFromURLOrDefault();
 
     const coords = getLatLngFromURL();
+
     if (coords){
       const r = getRadiusFromUI();
       runNearby(coords.lat, coords.lng, r, false);
-    }else{
+
+    } else {
       loadData(false);
     }
+
   }catch(e){
     console.error(e);
+
     $('#tbody').innerHTML =
       `<tr><td colspan="4" class="muted">Lỗi khởi tạo: ${e.message}</td></tr>`;
   }
