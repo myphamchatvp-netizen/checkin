@@ -600,126 +600,117 @@ async function getSupabaseLib(){
     openModal('edit', row);
   }
 
-  async function onMaKHClick(ma_kh){
-    if (!ma_kh) return;
+async function onMaKHClick(ma_kh){
+  if (!ma_kh) return;
 
-    const clickedKey = makeBrowserClickedKey(ma_kh);
+  if (checkinBusy) {
+    toast('Đang gửi check-in, vui lòng chờ...', 'info');
+    return;
+  }
 
-    if (clickedBrowserCheckins.has(clickedKey)) {
-      toast(`KH ${ma_kh} đã bấm check-in trên trình duyệt này rồi.`, 'ok');
-      return;
-    }
+  if (pendingCheckins.has(ma_kh)) {
+    toast('Check-in này đang được xử lý...', 'info');
+    return;
+  }
 
-    if (checkinBusy) {
-      toast('Đang gửi check-in, vui lòng chờ...', 'info');
-      return;
-    }
+  const coords = getLatLngFromURL();
+  if (!coords){
+    toast('Thiếu toạ độ lat/lng trong URL — không thể checkin', 'err');
+    return;
+  }
 
-    if (pendingCheckins.has(clickedKey)) {
-      toast('Check-in này đang được xử lý...', 'info');
-      return;
-    }
+  checkinBusy = true;
+  pendingCheckins.add(ma_kh);
 
-    const coords = getLatLngFromURL();
-    if (!coords){
-      toast('Thiếu toạ độ lat/lng trong URL — không thể checkin', 'err');
-      return;
-    }
+  const currentBtn = document.querySelector(`.ma-kh-btn[data-id="${cssEscapeSafe(ma_kh)}"]`);
 
-    /*
-      Khóa NGAY KHI BẤM.
-      Mục tiêu: render lại bảng cũng không làm nút xanh hiện lại.
-    */
-    clickedBrowserCheckins.add(clickedKey);
-    saveClickedBrowserCheckins();
+  /*
+    Khóa toàn bộ nút Mã KH ngay khi bấm.
+    Như vậy không thể bấm nhầm mã thứ 2.
+  */
+  $$('#tbody .ma-kh-btn:not(.ma-kh-disabled)').forEach(btn=>{
+    btn.disabled = true;
+    btn.classList.add('ma-kh-disabled');
+    btn.title = 'Đang có check-in được gửi...';
+  });
 
-    pendingCheckins.add(clickedKey);
-    checkinBusy = true;
+  if (currentBtn){
+    currentBtn.textContent = 'Đang gửi...';
+    currentBtn.removeAttribute('data-id');
+    currentBtn.title = 'Đang gửi check-in...';
+  }
 
-    const currentBtn = document.querySelector(`.ma-kh-btn[data-id="${cssEscapeSafe(ma_kh)}"]`);
-    if (currentBtn){
-      currentBtn.disabled = true;
-      currentBtn.classList.add('ma-kh-disabled');
-      currentBtn.textContent = 'Đang gửi...';
-      currentBtn.removeAttribute('data-id');
-      currentBtn.title = 'Đang gửi check-in...';
-    }
+  const ma_nv  = getCurrentNVID();
+  const ten_nv = getCurrentNVName();
+  const img    = getImagePayloadFromSession();
 
-    /*
-      Khóa tạm các nút Mã KH khác trong lúc webhook đang chạy.
-      Khi bảng render lại, chỉ mã đã bấm trong trình duyệt này giữ mờ.
-    */
-    $$('#tbody .ma-kh-btn:not(.ma-kh-disabled)').forEach(btn=>{
-      btn.disabled = true;
-      btn.classList.add('ma-kh-disabled');
-      btn.title = 'Đang có check-in được gửi...';
-    });
+  try{
+    const payload = {
+      action: 'checkin',
+      ma_kh,
+      ma_nv:  ma_nv  || null,
+      ten_nv: ten_nv || null,
+      lat: Number(coords.lat),
+      lng: Number(coords.lng),
+      image_mime: img?.image_mime || 'image/jpeg',
+      image_b64:  img?.image_b64  || ''
+    };
 
-    const ma_nv  = getCurrentNVID();
-    const ten_nv = getCurrentNVName();
-    const img    = getImagePayloadFromSession();
+    const res = await postWebhook(payload);
 
-    try{
-      const payload = {
-        action: 'checkin',
-        ma_kh,
-        ma_nv:  ma_nv  || null,
-        ten_nv: ten_nv || null,
-        lat: Number(coords.lat),
-        lng: Number(coords.lng),
-        image_mime: img?.image_mime || 'image/jpeg',
-        image_b64:  img?.image_b64  || ''
-      };
-
-      const res = await postWebhook(payload);
-
-      if (res.ok){
-        toast(`✅ ĐÃ CHECK IN KH: ${ma_kh}`,'ok');
-
-        if (currentBtn){
-          currentBtn.disabled = true;
-          currentBtn.classList.add('ma-kh-disabled');
-          currentBtn.textContent = ma_kh;
-          currentBtn.removeAttribute('data-id');
-          currentBtn.title = 'Trình duyệt này đã gửi check-in';
-        }
-
-        setTimeout(() => {
-          const coords2 = getLatLngFromURL();
-          if (coords2){
-            runNearby(coords2.lat, coords2.lng, getRadiusFromUI(), false);
-          } else {
-            loadData(false);
-          }
-        }, 1200);
-
-      } else {
-        throw new Error(`Webhook lỗi ${res.status}: ${res.text?.slice(0,160)||'...'}`);
-      }
-    } catch(err){
-      console.error(err);
-
-      /*
-        Nếu webhook lỗi thật thì mở lại nút,
-        vì lúc đó chưa gửi thành công.
-      */
-      clickedBrowserCheckins.delete(clickedKey);
-      saveClickedBrowserCheckins();
+    if (res.ok){
+      toast(`✅ ĐÃ CHECK IN KH: ${ma_kh}`,'ok');
 
       if (currentBtn){
-        currentBtn.disabled = false;
-        currentBtn.classList.remove('ma-kh-disabled');
+        currentBtn.disabled = true;
+        currentBtn.classList.add('ma-kh-disabled');
         currentBtn.textContent = ma_kh;
-        currentBtn.setAttribute('data-id', ma_kh);
-        currentBtn.title = '';
+        currentBtn.removeAttribute('data-id');
+        currentBtn.title = 'Đã gửi check-in';
       }
 
-      toast(err.message || 'Gửi webhook thất bại','err');
-    } finally {
-      checkinBusy = false;
-      pendingCheckins.delete(clickedKey);
+      setTimeout(() => {
+        const coords2 = getLatLngFromURL();
+        if (coords2){
+          runNearby(coords2.lat, coords2.lng, getRadiusFromUI(), false);
+        } else {
+          loadData(false);
+        }
+      }, 1200);
+
+    } else {
+      throw new Error(`Webhook lỗi ${res.status}: ${res.text?.slice(0,160)||'...'}`);
     }
+
+  } catch(err){
+    console.error(err);
+
+    /*
+      Nếu webhook lỗi thì mở lại toàn bộ nút chưa bị check-in hôm nay.
+    */
+    $$('#tbody .ma-kh-btn.ma-kh-disabled').forEach(btn=>{
+      const txt = btn.textContent.trim();
+
+      if (txt === 'Đang gửi...') {
+        btn.textContent = ma_kh;
+      }
+
+      btn.disabled = false;
+      btn.classList.remove('ma-kh-disabled');
+      btn.title = '';
+
+      if (!btn.getAttribute('data-id')) {
+        btn.setAttribute('data-id', txt === 'Đang gửi...' ? ma_kh : txt);
+      }
+    });
+
+    toast(err.message || 'Gửi webhook thất bại','err');
+
+  } finally {
+    checkinBusy = false;
+    pendingCheckins.delete(ma_kh);
   }
+}
 
   function generateMaKH(){
     const d = new Date();
