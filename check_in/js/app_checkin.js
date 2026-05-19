@@ -126,6 +126,7 @@ if (video) {
 const qp   = new URLSearchParams(location.search);
 const MA_KH = qp.get('ma_kh') || '';
 const MA_HD = qp.get('ma_hd') || '';
+
 if (tagInfo) {
   tagInfo.textContent = [MA_KH && `KH:${MA_KH}`, MA_HD && `HD:${MA_HD}`]
     .filter(Boolean).join(' · ');
@@ -374,6 +375,7 @@ async function startCam(){
 
     if (btnShot) btnShot.disabled = false;
     await initZoom();
+
     // 👇 luôn dùng mức zoom nhỏ nhất
     await setZoom(zoomMin);
     await tryApplyTorch(false);
@@ -507,9 +509,15 @@ function drawToCanvas(){
 btnStart && (btnStart.onclick = startCam);
 
 let shooting = false;
+
 btnShot && (btnShot.onclick = async ()=>{
-  if(!stream || shooting){ toast('Đang xử lý...', 'info'); return; }
-  shooting = true; btnShot.disabled = true;
+  if(!stream || shooting){
+    toast('Đang xử lý...', 'info');
+    return;
+  }
+
+  shooting = true;
+  btnShot.disabled = true;
 
   try{
     await ensureAudioCtx();
@@ -540,24 +548,44 @@ btnShot && (btnShot.onclick = async ()=>{
     sessionStorage.setItem(SESSION_IMG_KEY, JSON.stringify(payload));
 
     const targetUrl = new URL('/checkin_khach_hang.html', location.origin);
+
     targetUrl.searchParams.set('lat', String(lat));
     targetUrl.searchParams.set('lng', String(lng));
     targetUrl.searchParams.set('lag', String(lat)); // giữ nguyên theo bạn
+
     if (MA_KH) targetUrl.searchParams.set('ma_kh', MA_KH);
     if (MA_HD) targetUrl.searchParams.set('ma_hd', MA_HD);
+
     targetUrl.searchParams.set('img', 'session');
 
+    /*
+      Mỗi lần chụp ảnh mới từ app_checkin,
+      mở lại danh sách KH mới.
+
+      Xóa khóa tạm của nút Mã KH trên chính trình duyệt/tab hiện tại.
+      Như vậy khi mở checkin_khach_hang.html:
+      - Các nút Mã KH sẽ hiện lại bình thường.
+      - Chỉ những KH đã check-in cùng ngày theo dữ liệu thật mới bị mờ.
+    */
+    sessionStorage.removeItem('CLICKED_CHECKIN_BROWSER_V1');
+
     location.assign(targetUrl.toString());
+
   } catch (err) {
     console.error(err);
     toast('Lỗi khi chuẩn bị dữ liệu: ' + (err.message || err), 'err', 4000);
   } finally {
-    setTimeout(()=>{ shooting = false; btnShot.disabled = !stream; }, 800);
+    setTimeout(()=>{
+      shooting = false;
+      btnShot.disabled = !stream;
+    }, 800);
   }
 });
 
 /* Nút Menu → về main.html */
-btnMenu && (btnMenu.onclick = ()=>{ location.assign('main.html'); });
+btnMenu && (btnMenu.onclick = ()=>{
+  location.assign('main.html');
+});
 
 /* ================== AUTO BOOT ================== */
 
@@ -579,7 +607,9 @@ function showStage(){
   try {
     if (navigator.permissions && navigator.permissions.query) {
       const camPerm = await navigator.permissions.query({ name: 'camera' });
+
       let geoPerm = null;
+
       try {
         geoPerm = await navigator.permissions.query({ name: 'geolocation' });
       } catch (_) {}
@@ -591,6 +621,7 @@ function showStage(){
         // thử lấy GPS nhanh, nếu ok thì auto bật cam
         const g = await getGPSOnce();
         const ok = !!(g && !g.err && g.lat && g.lng && g.lat !== 0 && g.lng !== 0);
+
         if (ok) {
           await startCam();
         } else {
