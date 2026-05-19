@@ -275,6 +275,30 @@ async function getSupabaseLib(){
   let CURRENT = null;
   const pendingCheckins = new Set();
 
+  /*
+    Khóa nút Mã KH theo chính trình duyệt/tab hiện tại.
+    Bấm 1 lần là mờ ngay, dù bảng render lại vẫn không hiện xanh lại.
+    Chỉ lưu trong sessionStorage: đóng tab/mở lại thì mất khóa tạm.
+  */
+  const clickedBrowserCheckins = new Set(
+    JSON.parse(sessionStorage.getItem('CLICKED_CHECKIN_BROWSER_V1') || '[]')
+  );
+
+  let checkinBusy = false;
+
+  function saveClickedBrowserCheckins(){
+    try{
+      sessionStorage.setItem(
+        'CLICKED_CHECKIN_BROWSER_V1',
+        JSON.stringify(Array.from(clickedBrowserCheckins))
+      );
+    }catch{}
+  }
+
+  function makeBrowserClickedKey(ma_kh){
+    return String(ma_kh || '');
+  }
+
   function getLatLngFromURL(){
     const qp = new URLSearchParams(location.search);
     const latRaw = qp.get('lat') ?? qp.get('latitude');
@@ -515,8 +539,15 @@ async function getSupabaseLib(){
     } else {
       const html = rows.map(r => {
         const disabledByCustomer = r.checkedToday === true;
-        const disabled = disabledByCustomer;
-        const title = 'Khách này đã check-in hôm nay';
+        const clickedInThisBrowser = clickedBrowserCheckins.has(makeBrowserClickedKey(r.ma_kh));
+
+        const disabled = disabledByCustomer || clickedInThisBrowser;
+
+        const title = disabledByCustomer
+          ? 'Khách này đã check-in hôm nay'
+          : clickedInThisBrowser
+            ? 'Trình duyệt này đã bấm check-in khách này'
+            : '';
 
         const btnHtml = disabled
           ? `<button class="ma-kh-btn ma-kh-disabled" disabled title="${escAttr(title)}">${escAttr(r.ma_kh)}</button>`
@@ -572,8 +603,38 @@ async function getSupabaseLib(){
   async function onMaKHClick(ma_kh){
     if (!ma_kh) return;
 
-    if (pendingCheckins.has(ma_kh)) return;
-    pendingCheckins.add(ma_kh);
+    const clickedKey = makeBrowserClickedKey(ma_kh);
+
+    if (clickedBrowserCheckins.has(clickedKey)) {
+      toast(`KH ${ma_kh} đã bấm check-in trên trình duyệt này rồi.`, 'ok');
+      return;
+    }
+
+    if (checkinBusy) {
+      toast('Đang gửi check-in, vui lòng chờ...', 'info');
+      return;
+    }
+
+    if (pendingCheckins.has(clickedKey)) {
+      toast('Check-in này đang được xử lý...', 'info');
+      return;
+    }
+
+    const coords = getLatLngFromURL();
+    if (!coords){
+      toast('Thiếu toạ độ lat/lng trong URL — không thể checkin', 'err');
+      return;
+    }
+
+    /*
+      Khóa NGAY KHI BẤM.
+      Mục tiêu: render lại bảng cũng không làm nút xanh hiện lại.
+    */
+    clickedBrowserCheckins.add(clickedKey);
+    saveClickedBrowserCheckins();
+
+    pendingCheckins.add(clickedKey);
+    checkinBusy = true;
 
     const currentBtn = document.querySelector(`.ma-kh-btn[data-id="${cssEscapeSafe(ma_kh)}"]`);
     if (currentBtn){
@@ -584,16 +645,21 @@ async function getSupabaseLib(){
       currentBtn.title = 'Đang gửi check-in...';
     }
 
+    /*
+      Khóa tạm các nút Mã KH khác trong lúc webhook đang chạy.
+      Khi bảng render lại, chỉ mã đã bấm trong trình duyệt này giữ mờ.
+    */
+    $$('#tbody .ma-kh-btn:not(.ma-kh-disabled)').forEach(btn=>{
+      btn.disabled = true;
+      btn.classList.add('ma-kh-disabled');
+      btn.title = 'Đang có check-in được gửi...';
+    });
+
     const ma_nv  = getCurrentNVID();
     const ten_nv = getCurrentNVName();
     const img    = getImagePayloadFromSession();
 
     try{
-      const coords = getLatLngFromURL();
-      if (!coords){
-        throw new Error('Thiếu toạ độ lat/lng trong URL — không thể checkin');
-      }
-
       const payload = {
         action: 'checkin',
         ma_kh,
@@ -610,6 +676,14 @@ async function getSupabaseLib(){
       if (res.ok){
         toast(`✅ ĐÃ CHECK IN KH: ${ma_kh}`,'ok');
 
+        if (currentBtn){
+          currentBtn.disabled = true;
+          currentBtn.classList.add('ma-kh-disabled');
+          currentBtn.textContent = ma_kh;
+          currentBtn.removeAttribute('data-id');
+          currentBtn.title = 'Trình duyệt này đã gửi check-in';
+        }
+
         setTimeout(() => {
           const coords2 = getLatLngFromURL();
           if (coords2){
@@ -618,11 +692,19 @@ async function getSupabaseLib(){
             loadData(false);
           }
         }, 1200);
+
       } else {
         throw new Error(`Webhook lỗi ${res.status}: ${res.text?.slice(0,160)||'...'}`);
       }
     } catch(err){
       console.error(err);
+
+      /*
+        Nếu webhook lỗi thật thì mở lại nút,
+        vì lúc đó chưa gửi thành công.
+      */
+      clickedBrowserCheckins.delete(clickedKey);
+      saveClickedBrowserCheckins();
 
       if (currentBtn){
         currentBtn.disabled = false;
@@ -634,7 +716,8 @@ async function getSupabaseLib(){
 
       toast(err.message || 'Gửi webhook thất bại','err');
     } finally {
-      pendingCheckins.delete(ma_kh);
+      checkinBusy = false;
+      pendingCheckins.delete(clickedKey);
     }
   }
 
