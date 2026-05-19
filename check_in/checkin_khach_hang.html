@@ -276,27 +276,32 @@ async function getSupabaseLib(){
   const pendingCheckins = new Set();
 
   /*
-    Khóa nút Mã KH theo chính trình duyệt/tab hiện tại.
-    Bấm 1 lần là mờ ngay, dù bảng render lại vẫn không hiện xanh lại.
-    Chỉ lưu trong sessionStorage: đóng tab/mở lại thì mất khóa tạm.
+    Khóa toàn bộ nút Mã KH trên chính trình duyệt/tab hiện tại
+    sau khi đã bấm check-in thành công/đang gửi.
+
+    Mục tiêu:
+    - Bấm 1 Mã KH là toàn bộ Mã KH mờ ngay.
+    - Nếu bảng refresh/render lại, toàn bộ Mã KH vẫn mờ.
+    - Chỉ khi chụp ảnh mới từ app_checkin.js thì khóa này được xóa.
   */
-  const clickedBrowserCheckins = new Set(
-    JSON.parse(sessionStorage.getItem('CLICKED_CHECKIN_BROWSER_V1') || '[]')
-  );
+  const CHECKIN_BROWSER_DONE_KEY = 'CHECKIN_BROWSER_DONE_V1';
 
   let checkinBusy = false;
 
-  function saveClickedBrowserCheckins(){
+  function isBrowserCheckinDone(){
+    return sessionStorage.getItem(CHECKIN_BROWSER_DONE_KEY) === '1';
+  }
+
+  function setBrowserCheckinDone(){
     try{
-      sessionStorage.setItem(
-        'CLICKED_CHECKIN_BROWSER_V1',
-        JSON.stringify(Array.from(clickedBrowserCheckins))
-      );
+      sessionStorage.setItem(CHECKIN_BROWSER_DONE_KEY, '1');
     }catch{}
   }
 
-  function makeBrowserClickedKey(ma_kh){
-    return String(ma_kh || '');
+  function clearBrowserCheckinDone(){
+    try{
+      sessionStorage.removeItem(CHECKIN_BROWSER_DONE_KEY);
+    }catch{}
   }
 
   function getLatLngFromURL(){
@@ -539,14 +544,14 @@ async function getSupabaseLib(){
     } else {
       const html = rows.map(r => {
         const disabledByCustomer = r.checkedToday === true;
-        const clickedInThisBrowser = clickedBrowserCheckins.has(makeBrowserClickedKey(r.ma_kh));
+        const disabledByBrowser = isBrowserCheckinDone();
 
-        const disabled = disabledByCustomer || clickedInThisBrowser;
+        const disabled = disabledByCustomer || disabledByBrowser;
 
         const title = disabledByCustomer
           ? 'Khách này đã check-in hôm nay'
-          : clickedInThisBrowser
-            ? 'Trình duyệt này đã bấm check-in khách này'
+          : disabledByBrowser
+            ? 'Trình duyệt này đã gửi check-in, cần chụp ảnh mới để check-in tiếp'
             : '';
 
         const btnHtml = disabled
@@ -603,6 +608,11 @@ async function getSupabaseLib(){
 async function onMaKHClick(ma_kh){
   if (!ma_kh) return;
 
+  if (isBrowserCheckinDone()) {
+    toast('Đã gửi check-in trên trình duyệt này. Hãy chụp ảnh mới để check-in tiếp.', 'info');
+    return;
+  }
+
   if (checkinBusy) {
     toast('Đang gửi check-in, vui lòng chờ...', 'info');
     return;
@@ -621,6 +631,13 @@ async function onMaKHClick(ma_kh){
 
   checkinBusy = true;
   pendingCheckins.add(ma_kh);
+
+  /*
+    Khóa NGAY khi bấm.
+    Nếu webhook đang chạy mà bảng refresh/render lại, renderRows()
+    vẫn thấy CHECKIN_BROWSER_DONE_KEY và tiếp tục làm mờ toàn bộ Mã KH.
+  */
+  setBrowserCheckinDone();
 
   const currentBtn = document.querySelector(`.ma-kh-btn[data-id="${cssEscapeSafe(ma_kh)}"]`);
 
@@ -686,8 +703,10 @@ async function onMaKHClick(ma_kh){
     console.error(err);
 
     /*
-      Nếu webhook lỗi thì mở lại toàn bộ nút chưa bị check-in hôm nay.
+      Nếu webhook lỗi thật thì mở lại toàn bộ nút.
     */
+    clearBrowserCheckinDone();
+
     $$('#tbody .ma-kh-btn.ma-kh-disabled').forEach(btn=>{
       const txt = btn.textContent.trim();
 
