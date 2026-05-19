@@ -110,7 +110,7 @@ const btnTorch  = $('btnTorch');
 const btnSound  = $('btnSound');
 const btnZoomIn = $('btnZoomIn');
 const btnZoomOut= $('btnZoomOut');
-const btnMenu   = $('btnMenu');
+const btnMenu   = $('btnMenu'); // nút Menu mới
 
 const toastEl   = $('toast');
 const bar       = $('bar');
@@ -236,6 +236,7 @@ function getGeoPermStateSafe(){
     : Promise.resolve(null);
 }
 
+// gọi 1 lần để hiện popup xin quyền + lấy tọa độ
 function getGPSOnce(){ 
   return new Promise(resolve=>{
     if(!('geolocation' in navigator)) return resolve(null);
@@ -247,6 +248,9 @@ function getGPSOnce(){
   });
 }
 
+// ✅ đảm bảo: denied => báo + return false
+// ✅ prompt => tự gọi getCurrentPosition để bật popup xin quyền
+// ✅ granted => cố lấy 1 tọa độ hợp lệ (lat != 0)
 async function ensureGeoAllowedAndGet(){
   if(!('geolocation' in navigator)){
     toast('Thiết bị không hỗ trợ vị trí (GPS)', 'err', 3500);
@@ -262,11 +266,13 @@ async function ensureGeoAllowedAndGet(){
     return false;
   }
 
+  // st === 'prompt' hoặc null => gọi để bật popup xin quyền
   const r = await getGPSOnce();
 
+  // bị chặn ngay lúc popup
   if (r && r.err){
     const code = r.err.code;
-    if (code === 1){
+    if (code === 1){ // PERMISSION_DENIED
       toast('⚠️ Bạn đã chặn quyền vị trí. Hãy bật lại trong cài đặt trình duyệt.', 'err', 4200);
       openGeoHelp();
       return false;
@@ -284,6 +290,7 @@ async function ensureGeoAllowedAndGet(){
     return false;
   }
 
+  // lưu lại để các bước khác dùng (nếu cần)
   window.__myLatLng = { lat, lng };
   return true;
 }
@@ -301,11 +308,14 @@ function stopCam(){
   if (video) video.srcObject=null;
 }
 
+// ✅ startCam: BẮT BUỘC GPS trước rồi mới xin camera
 async function startCam(){
   try{
+    // Tắt stream cũ
     stopCam();
     stage && stage.classList.remove('ready');
 
+    // ✅ BẮT BUỘC có GPS trước khi mở camera
     const gpsReady = await ensureGeoAllowedAndGet();
     if (!gpsReady) {
       if (btnShot) btnShot.disabled = true;
@@ -348,8 +358,10 @@ async function startCam(){
       video.setAttribute('playsinline','');
       video.muted = true;
 
+      // Đợi metadata
       await new Promise(r => { video.onloadedmetadata = r; });
 
+      // BẮT BUỘC phải play() cho mobile
       try {
         await video.play();
       } catch (err) {
@@ -364,11 +376,13 @@ async function startCam(){
     if (btnShot) btnShot.disabled = false;
     await initZoom();
 
+    // 👇 luôn dùng mức zoom nhỏ nhất
     await setZoom(zoomMin);
     await tryApplyTorch(false);
 
     toast('Đã bật camera','ok');
 
+    // ✅ Chạy kiểm tra 20m ở NỀN, không chặn UI / không làm load chậm
     setTimeout(() => {
       afterCameraStartedCheck20m().catch(()=>{});
     }, 200);
@@ -510,6 +524,7 @@ btnShot && (btnShot.onclick = async ()=>{
     await playShutter();
     drawToCanvas();
 
+    // ✅ Trước khi chụp/đi tiếp: BẮT BUỘC GPS hợp lệ (lat != 0)
     const gps = await getGPSOnce();
     const lat = gps?.lat ?? 0;
     const lng = gps?.lng ?? 0;
@@ -517,7 +532,7 @@ btnShot && (btnShot.onclick = async ()=>{
     if (!lat || lat === 0 || !lng || lng === 0){
       toast('⚠️ Chưa có vị trí. Hãy bật GPS rồi chụp lại.', 'err', 3500);
       try{ alert('⚠️ Chưa có vị trí. Hãy bật GPS/vị trí rồi chụp lại.'); }catch{}
-      return;
+      return; // THOÁT, KHÔNG ĐI TIẾP
     }
 
     const mime = 'image/jpeg';
@@ -536,7 +551,7 @@ btnShot && (btnShot.onclick = async ()=>{
 
     targetUrl.searchParams.set('lat', String(lat));
     targetUrl.searchParams.set('lng', String(lng));
-    targetUrl.searchParams.set('lag', String(lat));
+    targetUrl.searchParams.set('lag', String(lat)); // giữ nguyên theo bạn
 
     if (MA_KH) targetUrl.searchParams.set('ma_kh', MA_KH);
     if (MA_HD) targetUrl.searchParams.set('ma_hd', MA_HD);
@@ -547,13 +562,12 @@ btnShot && (btnShot.onclick = async ()=>{
       Mỗi lần chụp ảnh mới từ app_checkin,
       mở lại danh sách KH mới.
 
-      Xóa toàn bộ khóa tạm của nút Mã KH trên chính trình duyệt/tab hiện tại.
-      Khi mở checkin_khach_hang.html:
+      Xóa khóa tạm của nút Mã KH trên chính trình duyệt/tab hiện tại.
+      Như vậy khi mở checkin_khach_hang.html:
       - Các nút Mã KH sẽ hiện lại bình thường.
       - Chỉ những KH đã check-in cùng ngày theo dữ liệu thật mới bị mờ.
     */
     sessionStorage.removeItem('CLICKED_CHECKIN_BROWSER_V1');
-    sessionStorage.removeItem('CHECKIN_BROWSER_DONE_V1');
 
     location.assign(targetUrl.toString());
 
@@ -574,12 +588,21 @@ btnMenu && (btnMenu.onclick = ()=>{
 });
 
 /* ================== AUTO BOOT ================== */
+
+// helper: đảm bảo stage + UI hiện ra (kể cả khi chưa bật cam)
 function showStage(){
   if (stage && !stage.classList.contains('ready')) {
     stage.classList.add('ready');
   }
 }
 
+/** 
+ * Auto bật cam CHỈ khi:
+ * - camera granted
+ * - geolocation granted
+ * - và lấy được GPS thật (lat != 0)
+ * Nếu không thì chỉ hiện UI + hướng dẫn bấm "Bật camera".
+ */
 (async () => {
   try {
     if (navigator.permissions && navigator.permissions.query) {
@@ -595,6 +618,7 @@ function showStage(){
       const geoGranted = geoPerm ? (geoPerm.state === 'granted') : false;
 
       if (camGranted && geoGranted) {
+        // thử lấy GPS nhanh, nếu ok thì auto bật cam
         const g = await getGPSOnce();
         const ok = !!(g && !g.err && g.lat && g.lng && g.lat !== 0 && g.lng !== 0);
 
@@ -611,6 +635,7 @@ function showStage(){
         toast('Bấm nút "Bật camera" để mở cam (sẽ yêu cầu GPS trước).', 'info', 3200);
       }
 
+      // Nếu trạng thái quyền camera thay đổi trong lúc đang mở trang
       camPerm.onchange = () => {
         if (camPerm.state === 'granted') {
           toast('Đã cấp quyền camera, bấm "Bật camera" để dùng.', 'ok', 2500);
@@ -630,8 +655,10 @@ function showStage(){
 /* Khi tab ẩn/hiện lại */
 document.addEventListener('visibilitychange', () => { 
   if (document.hidden) {
+    // Ẩn tab → tắt camera cho nhẹ máy
     stopCam();
   } else {
+    // Quay lại: không tự bật cam, chỉ hiện UI + nhắc
     showStage();
     if (!stream) {
       if (btnShot) btnShot.disabled = true;
