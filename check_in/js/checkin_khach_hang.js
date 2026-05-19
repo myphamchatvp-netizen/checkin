@@ -44,18 +44,46 @@ async function getSupabaseLib(){
   let CURRENT = null;
   const pendingCheckins = new Set();
 
-  /*
-    Khóa toàn bộ nút Mã KH trên chính trình duyệt/tab hiện tại
-    sau khi đã bấm check-in thành công/đang gửi.
+/*
+  Khóa toàn bộ nút Mã KH trên chính trình duyệt/tab hiện tại
+  sau khi đã bấm check-in thành công/đang gửi.
 
-    Mục tiêu:
-    - Bấm 1 Mã KH là toàn bộ Mã KH mờ ngay.
-    - Nếu bảng refresh/render lại, toàn bộ Mã KH vẫn mờ.
-    - Chỉ khi chụp ảnh mới từ app_checkin.js thì khóa này được xóa.
-  */
-  const CHECKIN_BROWSER_DONE_KEY = 'CHECKIN_BROWSER_DONE_V1';
+  Mục tiêu:
+  - Bấm 1 Mã KH là toàn bộ Mã KH mờ ngay.
+  - Nếu bảng refresh/render lại, toàn bộ Mã KH vẫn mờ.
+  - Chỉ khi chụp ảnh mới từ app_checkin.js thì khóa này được xóa.
+*/
+const CHECKIN_BROWSER_DONE_KEY = 'CHECKIN_BROWSER_DONE_V1';
+const CHECKIN_LAST_SHOT_KEY = 'CHECKIN_LAST_SHOT_ID';
 
-  let checkinBusy = false;
+/*
+  Nếu app_checkin.js vừa chụp ảnh mới và truyền shot_id mới sang,
+  thì mở lại toàn bộ nút Mã KH.
+
+  Lưu ý:
+  - Chỉ clear khóa 1 lần cho mỗi shot_id mới.
+  - Nếu refresh lại cùng shot_id sau khi đã check-in thì vẫn mờ.
+*/
+(function clearLockWhenNewShot(){
+  const qp = new URLSearchParams(location.search);
+
+  const shotId =
+    qp.get('shot_id') ||
+    sessionStorage.getItem('CHECKIN_CURRENT_SHOT_ID') ||
+    '';
+
+  const lastShotId =
+    sessionStorage.getItem(CHECKIN_LAST_SHOT_KEY) ||
+    '';
+
+  if (shotId && shotId !== lastShotId) {
+    sessionStorage.removeItem('CLICKED_CHECKIN_BROWSER_V1');
+    sessionStorage.removeItem(CHECKIN_BROWSER_DONE_KEY);
+    sessionStorage.setItem(CHECKIN_LAST_SHOT_KEY, shotId);
+  }
+})();
+
+let checkinBusy = false;
 
   function isBrowserCheckinDone(){
     return sessionStorage.getItem(CHECKIN_BROWSER_DONE_KEY) === '1';
