@@ -131,8 +131,19 @@ function needHardRecenter(target){
 function escForURL(s){ return encodeURIComponent(String(s||'')); }
 function linkViewOnGoogle(lat,lng,name=''){ const q=`${lat},${lng}`; const label=name?`&query_place_id=&query=${escForURL(name)} (${escForURL(q)})`:`&query=${escForURL(q)}`; return `https://www.google.com/maps/search/?api=1${label}`; }
 function linkDirectionApple(lat,lng){ return `http://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`; }
-function buildViewLinks(lat,lng,name=''){ const gView=linkViewOnGoogle(lat,lng,name), aDir=linkDirectionApple(lat,lng); return `<div class="nav-links" style="margin-top:6px;font-weight:600;"><a href="${aDir}" target="_blank" rel="noopener"> Apple Maps</a> · <a href="${gView}" target="_blank" rel="noopener">🔎 Xem trên Google Maps</a></div>`; }
+function buildViewLinks(lat,lng,name=''){
+  const gView = linkViewOnGoogle(lat,lng,name);
+  const aDir = linkDirectionApple(lat,lng);
+  const gDir = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 
+  return `<div class="nav-links" style="margin-top:6px;font-weight:600;">
+    <a href="${gDir}" target="_blank" rel="noopener">📍 Dẫn đường Google Map</a>
+    ·
+    <a href="${gView}" target="_blank" rel="noopener">🔎 Xem trên Google Maps</a>
+    ·
+    <a href="${aDir}" target="_blank" rel="noopener"> Apple Maps</a>
+  </div>`;
+}
 /* ========= Marker (divIcon có số lồng trong) ========= */
 function markerRadius(){ return mapCfg.markerSize==='small'?22:mapCfg.markerSize==='large'?28:24; }
 function makeNumIcon(num, color='#0ea5e9'){
