@@ -89,3 +89,55 @@ label{user-select:none; white-space:nowrap}
 }
 #mapToolbar button:hover { background: #e2e8f0; }
 #mapToolbar button:active { transform: scale(0.94); }
+
+/* ===== Popup khách hàng ===== */
+.popup-kh{
+  font-size:18px;
+  line-height:1.45;
+  min-width:250px;
+}
+
+.popup-title{
+  font-size:22px;
+  font-weight:700;
+  margin-bottom:4px;
+}
+
+/* Link dẫn đường trong popup */
+.nav-links{
+  margin-top:12px;
+}
+
+.map-dir-btn{
+  display:block;
+  width:100%;
+  box-sizing:border-box;
+  padding:10px 12px;
+  border-radius:10px;
+  background:#2563eb;
+  color:#fff !important;
+  text-align:center;
+  text-decoration:none;
+  font-weight:700;
+}
+
+.map-dir-btn:hover{
+  background:#1d4ed8;
+}
+
+.map-small-links{
+  margin-top:8px;
+  font-size:13px;
+  text-align:center;
+}
+
+.map-small-links a{
+  color:#2563eb;
+  text-decoration:none;
+  font-weight:600;
+}
+
+/* Nếu popup bị hẹp hoặc bị cắt nút */
+.leaflet-popup-content{
+  min-width:260px;
+}
