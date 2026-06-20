@@ -204,24 +204,48 @@
     return allRows;
   }
 
+  // ===== LẤY TOÀN BỘ LỊCH SỬ CHECK-IN TỪ TRƯỚC TỚI GIỜ =====
+  async function fetchAllCheckinRows() {
+    const pageSize = 1000;
+    let from = 0;
+    let allRows = [];
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("nv_checkin")
+        .select("ma_kh")
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+
+      allRows = allRows.concat(data);
+
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+
+    return allRows;
+  }
+
   const data = await fetchAllRows();
   console.log("Tổng rows lấy được:", data.length);
 
-  // ===== TỰ CỘNG TỔNG CHECK-IN THEO KHÁCH HÀNG KHI LOAD =====
+  const checkinHistory = await fetchAllCheckinRows();
+  console.log("Tổng lịch sử check-in:", checkinHistory.length);
+
+  // ===== TỰ ĐẾM TỔNG CHECK-IN TỪ TRƯỚC TỚI GIỜ THEO KHÁCH HÀNG =====
   const tongCheckinTheoKH = new Map();
 
-  data.forEach(r => {
+  checkinHistory.forEach(r => {
     const khKey = String(r.ma_kh || "").trim();
     if (!khKey) return;
 
     const current = tongCheckinTheoKH.get(khKey) || 0;
-    tongCheckinTheoKH.set(
-      khKey,
-      current + toNumber(r.checkin_thang, 0)
-    );
+    tongCheckinTheoKH.set(khKey, current + 1);
   });
 
-  console.log("Tổng check-in theo KH:", tongCheckinTheoKH);
+  console.log("Tổng check-in từ trước tới giờ theo KH:", tongCheckinTheoKH);
 
   let points = [];
   let markers = [];
