@@ -14,12 +14,17 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <style>
+    :root {
+      --border:#e5e7eb;
+      --muted:#6b7280;
+    }
+
     html,body{
       margin:0;
       padding:0;
       height:100%;
       overflow:hidden;
-      font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family:system-ui,Segoe UI,Roboto,Arial;
     }
 
     #map{
@@ -53,10 +58,10 @@
     .row select,
     #searchBox{
       flex:1;
-      padding:6px 8px;
+      padding:8px 12px;
       font-size:14px;
-      border-radius:8px;
-      border:1px solid #d1d5db;
+      border-radius:10px;
+      border:1px solid #d0d7de;
       background:white;
     }
 
@@ -103,34 +108,34 @@
       box-shadow:0 0 0 1px rgba(0,0,0,0.3),0 4px 8px rgba(0,0,0,0.2);
     }
 
-    .popup-kh{
-      font-size:18px;
-      line-height:1.45;
-      min-width:230px;
+    .leaflet-popup-content{
+      min-width:240px;
     }
 
-    .popup-kh .title{
-      font-size:22px;
-      font-weight:700;
-      margin-bottom:2px;
-    }
-
-    .map-btn{
+    .map-link{
       display:block;
-      width:100%;
-      box-sizing:border-box;
-      text-align:center;
-      margin-top:12px;
+      margin-top:10px;
       padding:9px 12px;
       background:#2563eb;
       color:white !important;
       border-radius:8px;
+      text-align:center;
       text-decoration:none;
       font-weight:700;
     }
 
-    .map-btn:hover{
+    .map-link:hover{
       background:#1d4ed8;
+    }
+
+    .map-link-small{
+      display:block;
+      margin-top:8px;
+      color:#2563eb !important;
+      text-align:center;
+      text-decoration:none;
+      font-weight:600;
+      font-size:13px;
     }
   </style>
 </head>
@@ -138,14 +143,13 @@
 <body>
 
 <div class="top-controls">
-
   <div class="row">
     <button id="gpsBtn">📍</button>
 
     <select id="colorFilter">
       <option value="">Tất cả</option>
-      <option value="green">Xanh - có mua</option>
-      <option value="red">Đỏ - chưa mua</option>
+      <option value="green">Xanh (có mua)</option>
+      <option value="red">Đỏ (chưa mua)</option>
     </select>
 
     <select id="nvFilter">
@@ -154,7 +158,6 @@
   </div>
 
   <input id="searchBox" type="text" placeholder="Tìm kiếm KH...">
-
 </div>
 
 <div id="map"></div>
@@ -162,23 +165,13 @@
 <script>
 (async function(){
 
-  // ================== HÀM CHỐNG LỖI HIỂN THỊ HTML ==================
-  function escapeHtml(value){
+  function esc(value){
     return String(value ?? "")
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
-  }
-
-  function getValue(row, keys, defaultValue = ""){
-    for(const key of keys){
-      if(row[key] !== undefined && row[key] !== null && row[key] !== ""){
-        return row[key];
-      }
-    }
-    return defaultValue;
   }
 
   // ================== KẾT NỐI SUPABASE ==================
@@ -203,7 +196,7 @@
     maxZoom:19
   }).addTo(map);
 
-  // ================== LẤY TOÀN BỘ KH ==================
+  // ================== LẤY KH ==================
   async function fetchAllRows() {
     const pageSize = 1000;
     let from = 0;
@@ -212,14 +205,10 @@
     while (true) {
       const { data, error } = await supabase
         .from("nv_checkin_khach_hang")
-        .select("*")
+        .select("lat,lng,ten_kh,ma_kh,dia_chi,dien_thoai,ma_nv,Da_mua_hang")
         .range(from, from + pageSize - 1);
 
-      if (error) {
-        console.error("Lỗi Supabase:", error);
-        throw error;
-      }
-
+      if (error) throw error;
       if (!data || data.length === 0) break;
 
       allRows = allRows.concat(data);
@@ -237,8 +226,7 @@
   let points = [];
   let markers = [];
 
-  // ================== TẠO MARKER KHÁCH HÀNG ==================
-  data.forEach((r, i) => {
+  data.forEach((r,i)=>{
     if(!r.lat || !r.lng) return;
 
     const lat = parseFloat(r.lat);
@@ -247,52 +235,32 @@
     if(isNaN(lat) || isNaN(lng)) return;
 
     const stt = i + 1;
+    const isGreen = r.Da_mua_hang ? true : false;
 
-    const daMuaHang = Boolean(
-      r.Da_mua_hang === true ||
-      r.da_mua_hang === true ||
-      r.Da_mua_hang === 1 ||
-      r.da_mua_hang === 1 ||
-      r.Da_mua_hang === "true" ||
-      r.da_mua_hang === "true"
-    );
-
-    const color = daMuaHang ? "green" : "red";
+    const googleMapDir = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+    const googleMapView = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 
     const icon = L.divIcon({
-      html:`<div class="${daMuaHang ? 'mk-green' : 'mk-red'}">${stt}</div>`,
+      html:`<div class="${isGreen ? 'mk-green' : 'mk-red'}">${stt}</div>`,
       iconSize:[26,26],
       iconAnchor:[13,13]
     });
 
-    const tenKH = getValue(r, ["ten_kh", "tenkh", "customerName"], "Không tên");
-    const maKH = getValue(r, ["ma_kh", "makh", "customerCode"], "");
-    const diaChi = getValue(r, ["dia_chi", "diachi", "address"], "");
-    const dienThoai = getValue(r, ["dien_thoai", "sdt", "phone"], "");
-    const nhanVien = getValue(r, ["ten_nv", "ten_nhan_vien", "ma_nv", "manv"], "");
-    const checkinThang = getValue(r, ["checkin_thang", "checkin_month", "so_checkin_thang"], 0);
-    const capDo = getValue(r, ["cap_do", "capdo", "level"], "");
-    const mau = getValue(r, ["mau", "mau_sac", "color_name"], color === "green" ? "Xanh" : "Cam");
-    const muaHangText = daMuaHang ? "Đã mua" : "Chưa mua";
-
-    const googleMapLink = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-
     const popupHtml = `
-      <div class="popup-kh">
-        <div class="title">${escapeHtml(tenKH)}</div>
-        Mã KH: ${escapeHtml(maKH)}<br>
-        Địa chỉ: ${escapeHtml(diaChi)}<br>
-        ĐT: ${escapeHtml(dienThoai)}<br>
-        NV: ${escapeHtml(nhanVien)}<br>
-        Checkin tháng: <b>${escapeHtml(checkinThang)}</b><br>
-        Cấp độ: <b>${escapeHtml(capDo)}</b><br>
-        Màu: <b>${escapeHtml(mau)}</b><br>
-        Mua hàng: <b>${escapeHtml(muaHangText)}</b>
+      <b>${esc(r.ten_kh || "Không tên")}</b><br>
+      Mã KH: ${esc(r.ma_kh || "")}<br>
+      Địa chỉ: ${esc(r.dia_chi || "")}<br>
+      ĐT: ${esc(r.dien_thoai || "")}<br>
+      NV: ${esc(r.ma_nv || "")}<br>
+      Đã mua: <b>${r.Da_mua_hang ? "✔ Có" : "✘ Không"}</b>
 
-        <a class="map-btn" href="${googleMapLink}" target="_blank" rel="noopener">
-          📍 Dẫn đường Google Map
-        </a>
-      </div>
+      <a class="map-link" href="${googleMapDir}" target="_blank" rel="noopener">
+        📍 Dẫn đường Google Map
+      </a>
+
+      <a class="map-link-small" href="${googleMapView}" target="_blank" rel="noopener">
+        🔎 Xem trên Google Maps
+      </a>
     `;
 
     const mk = L.marker([lat,lng], { icon }).bindPopup(popupHtml);
@@ -303,16 +271,15 @@
       stt,
       lat,
       lng,
-      marker: mk,
-      color,
-      nv: String(getValue(r, ["ma_nv", "manv", "ten_nv", "ten_nhan_vien"], "")),
-      row: r
+      marker:mk,
+      color:isGreen ? "green" : "red",
+      nv:r.ma_nv || "",
+      row:r
     });
 
     markers.push(mk);
   });
 
-  // ================== FIT MAP THEO MARKER ==================
   if(markers.length){
     const grp = L.featureGroup(markers);
     map.fitBounds(grp.getBounds(), {
@@ -320,7 +287,7 @@
     });
   }
 
-  // ================== GPS VỊ TRÍ HIỆN TẠI ==================
+  // ================== GPS ==================
   let userMarker = null;
   let userCircle = null;
   let lastLat = null;
@@ -357,14 +324,14 @@
 
   if(navigator.geolocation){
     navigator.geolocation.getCurrentPosition(
-      pos => {
+      pos=>{
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
 
         showGPS(lat,lng);
         map.setView([lat,lng],18);
       },
-      err => {
+      err=>{
         console.warn("Không lấy được GPS:", err);
       },
       {
@@ -375,10 +342,10 @@
     );
 
     navigator.geolocation.watchPosition(
-      pos => {
+      pos=>{
         showGPS(pos.coords.latitude, pos.coords.longitude);
       },
-      err => {
+      err=>{
         console.warn("GPS watch lỗi:", err);
       },
       {
@@ -389,39 +356,42 @@
     );
   }
 
-  document.getElementById("gpsBtn").onclick = () => {
+  document.getElementById("gpsBtn").onclick = ()=>{
     if(lastLat && lastLng){
       map.setView([lastLat,lastLng],18);
     } else if(navigator.geolocation){
-      navigator.geolocation.getCurrentPosition(pos => {
-        showGPS(pos.coords.latitude, pos.coords.longitude);
-        map.setView([pos.coords.latitude, pos.coords.longitude],18);
+      navigator.geolocation.getCurrentPosition(pos=>{
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        showGPS(lat,lng);
+        map.setView([lat,lng],18);
       });
     }
   };
 
-  // ================== DROPDOWN LỌC NHÂN VIÊN ==================
+  // ================== DROPDOWN LỌC NV ==================
   const nvFilter = document.getElementById("nvFilter");
   const nvSet = new Set();
 
-  points.forEach(p => {
+  points.forEach(p=>{
     if(!p.nv) return;
 
     p.nv
       .split("_")
-      .map(x => x.trim())
+      .map(x=>x.trim())
       .filter(Boolean)
-      .forEach(nv => nvSet.add(nv));
+      .forEach(nv=>nvSet.add(nv));
   });
 
-  [...nvSet].sort().forEach(nv => {
+  [...nvSet].sort().forEach(nv=>{
     const opt = document.createElement("option");
     opt.value = nv;
     opt.textContent = nv;
     nvFilter.appendChild(opt);
   });
 
-  // ================== LỌC MÀU + NHÂN VIÊN + TỪ KHÓA ==================
+  // ================== LỌC MÀU + NHÂN VIÊN + TÌM KIẾM ==================
   const colorFilter = document.getElementById("colorFilter");
   const searchBox = document.getElementById("searchBox");
 
@@ -430,7 +400,7 @@
     const fNV = nvFilter.value;
     const q = searchBox.value.trim().toLowerCase();
 
-    points.forEach(p => {
+    points.forEach(p=>{
       const r = p.row;
       let ok = true;
 
@@ -441,7 +411,7 @@
       if(fNV){
         const nvList = p.nv
           .split("_")
-          .map(x => x.trim())
+          .map(x=>x.trim())
           .filter(Boolean);
 
         if(!nvList.includes(fNV)){
@@ -452,17 +422,12 @@
       if(q){
         const text = `
           ${r.ma_kh || ""}
-          ${r.makh || ""}
           ${r.ten_kh || ""}
-          ${r.tenkh || ""}
           ${r.dia_chi || ""}
-          ${r.diachi || ""}
           ${r.dien_thoai || ""}
-          ${r.sdt || ""}
           ${r.ghi_chu || ""}
           ${r.ghi_ghu || ""}
           ${r.ma_nv || ""}
-          ${r.ten_nv || ""}
         `.toLowerCase();
 
         if(!text.includes(q)){
