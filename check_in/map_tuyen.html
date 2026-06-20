@@ -153,6 +153,12 @@
     return s === "true" || s === "1" || s === "yes" || s === "đã mua hàng" || s === "da mua hang";
   }
 
+  function getKHKey(row){
+    return String(row.ma_kh || row.makh || "")
+      .trim()
+      .toUpperCase();
+  }
+
   function getLevel(row){
     const hasPhone = normalizePhone(row.dien_thoai) !== "";
     const checkinMonth = toNumber(row.checkin_thang, 0);
@@ -204,7 +210,6 @@
     return allRows;
   }
 
-  // ===== LẤY TOÀN BỘ LỊCH SỬ CHECK-IN TỪ TRƯỚC TỚI GIỜ =====
   async function fetchAllCheckinRows() {
     const pageSize = 1000;
     let from = 0;
@@ -213,7 +218,7 @@
     while (true) {
       const { data, error } = await supabase
         .from("nv_checkin")
-        .select("ma_kh")
+        .select("ma_kh,makh")
         .range(from, from + pageSize - 1);
 
       if (error) throw error;
@@ -232,20 +237,23 @@
   console.log("Tổng rows lấy được:", data.length);
 
   const checkinHistory = await fetchAllCheckinRows();
-  console.log("Tổng lịch sử check-in:", checkinHistory.length);
+  console.log("Tổng dòng lịch sử check-in:", checkinHistory.length);
 
-  // ===== TỰ ĐẾM TỔNG CHECK-IN TỪ TRƯỚC TỚI GIỜ THEO KHÁCH HÀNG =====
+  // ===== ĐẾM TỔNG CHECK-IN TỪ TRƯỚC TỚI GIỜ THEO MÃ KH =====
+  // Không lọc ngày. Mỗi dòng nv_checkin = 1 lần check-in.
   const tongCheckinTheoKH = new Map();
 
   checkinHistory.forEach(r => {
-    const khKey = String(r.ma_kh || "").trim();
+    const khKey = getKHKey(r);
     if (!khKey) return;
 
-    const current = tongCheckinTheoKH.get(khKey) || 0;
-    tongCheckinTheoKH.set(khKey, current + 1);
+    tongCheckinTheoKH.set(
+      khKey,
+      (tongCheckinTheoKH.get(khKey) || 0) + 1
+    );
   });
 
-  console.log("Tổng check-in từ trước tới giờ theo KH:", tongCheckinTheoKH);
+  console.log("Tổng check-in theo mã KH:", tongCheckinTheoKH);
 
   let points = [];
   let markers = [];
@@ -270,8 +278,12 @@
 
     const googleMapLink = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 
-    const khKey = String(r.ma_kh || "").trim();
-    const tongCheckinKH = tongCheckinTheoKH.get(khKey) || 0;
+    const khKey = getKHKey(r);
+    const tongLichSuKH = tongCheckinTheoKH.get(khKey) || 0;
+    const checkinThangKH = toNumber(r.checkin_thang, 0);
+
+    // Tổng từ trước tới giờ không được nhỏ hơn check-in tháng
+    const tongCheckinKH = Math.max(tongLichSuKH, checkinThangKH);
 
     const mk = L.marker([lat,lng],{icon}).bindPopup(`
       <b>${r.ten_kh || "Không tên"}</b><br>
@@ -280,7 +292,7 @@
       ĐT: ${r.dien_thoai || ""}<br>
       NV: ${r.ten_nv || r.ma_nv || ""}<br>
       Tổng check-in KH: <b>${tongCheckinKH}</b><br>
-      Checkin tháng: <b>${toNumber(r.checkin_thang, 0)}</b><br>
+      Checkin tháng: <b>${checkinThangKH}</b><br>
       Cấp độ: <b>${level}</b><br>
       Màu: <b>${
         color === "purple" ? "Tím" :
